@@ -19,6 +19,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
+use super::frame_clock::display_interval;
 use crate::settings::{AppSettings, Color};
 
 const WINDOW_CLASS: *const u16 = windows_sys::w!("ClickShow.Rust.Overlay");
@@ -91,6 +92,7 @@ impl Overlays {
             color,
             size_px,
             stroke_px: 3.0 * scale,
+            frame_interval: display_interval(point),
             is_down,
             started: now,
         };
@@ -165,8 +167,16 @@ impl Overlays {
         Ok(())
     }
 
-    pub fn has_animation(&self) -> bool {
-        self.clicks.iter().any(|click| click.animation.is_some())
+    pub fn frame_interval(&self) -> Option<Duration> {
+        self.clicks
+            .iter()
+            .filter_map(|click| {
+                click
+                    .animation
+                    .as_ref()
+                    .map(|animation| animation.frame_interval)
+            })
+            .min()
     }
 
     fn discard_idle(&mut self, now: Instant) {
@@ -228,6 +238,7 @@ struct Animation {
     color: Color,
     size_px: f64,
     stroke_px: f64,
+    frame_interval: Duration,
     is_down: bool,
     started: Instant,
 }
@@ -701,6 +712,7 @@ mod tests {
             color: WHITE,
             size_px: 100.0,
             stroke_px: 3.0,
+            frame_interval: Duration::from_millis(5),
             is_down: true,
             started,
         };
@@ -735,6 +747,7 @@ mod tests {
             color: WHITE,
             size_px: 120.0,
             stroke_px: 3.0,
+            frame_interval: Duration::from_millis(5),
             is_down: false,
             started,
         };
@@ -851,7 +864,22 @@ mod tests {
             overlays.clicks[0].window.hwnd,
             overlays.clicks[1].window.hwnd
         );
-        assert!(overlays.has_animation());
+        let fast = Duration::from_secs_f64(1.0 / 240.0);
+        let slow = Duration::from_secs_f64(1.0 / 60.0);
+        overlays.clicks[0]
+            .animation
+            .as_mut()
+            .unwrap()
+            .frame_interval = fast;
+        overlays.clicks[1]
+            .animation
+            .as_mut()
+            .unwrap()
+            .frame_interval = slow;
+        assert_eq!(overlays.frame_interval(), Some(fast));
+        overlays.clicks[0].animation.as_mut().unwrap().started = Instant::now() - DOWN_DURATION;
+        overlays.tick().unwrap();
+        assert_eq!(overlays.frame_interval(), Some(slow));
         let mut handles = vec![overlays.dpi_probe.as_ref().unwrap().hwnd];
         for click in &mut overlays.clicks {
             let style = unsafe { GetWindowLongPtrW(click.window.hwnd, GWL_EXSTYLE) } as u32;
@@ -862,10 +890,12 @@ mod tests {
                 | WS_EX_NOACTIVATE;
             assert_eq!(style & required, required);
             handles.push(click.window.hwnd);
-            click.animation.as_mut().unwrap().started = Instant::now() - Duration::from_secs(1);
+            if let Some(animation) = &mut click.animation {
+                animation.started = Instant::now() - Duration::from_secs(1);
+            }
         }
         overlays.tick().unwrap();
-        assert!(!overlays.has_animation());
+        assert!(overlays.frame_interval().is_none());
         assert!(overlays.clicks.iter().all(|click| !click.window.visible));
         assert_eq!(
             unsafe { window_proc(reusable_hwnd, WM_NCHITTEST, 0, 0) },

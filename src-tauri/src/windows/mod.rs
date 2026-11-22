@@ -1,11 +1,13 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 pub mod autostart;
+mod frame_clock;
 mod overlay;
 
 use crate::{
     input::ButtonTracker,
     settings::{AppSettings, Color, MouseButton},
 };
+use frame_clock::{FrameTimer, next_deadline};
 use overlay::Overlays;
 use std::{
     cell::{Cell, RefCell},
@@ -21,6 +23,7 @@ use windows_sys::{
 
 const CLASS: *const u16 = w!("ClickShow.MouseEvents");
 const INPUT_MESSAGE: u32 = WM_APP + 1;
+const FRAME_MESSAGE: u32 = WM_APP + 2;
 const ANIMATION_TIMER: usize = 1;
 static START: OnceLock<Instant> = OnceLock::new();
 
@@ -33,6 +36,8 @@ thread_local! {
 struct Runtime {
     hwnd: HWND,
     hook: HHOOK,
+    frame_timer: Option<FrameTimer>,
+    frame_deadline: Option<Instant>,
     overlays: Overlays,
     tracker: ButtonTracker,
     settings: AppSettings,
@@ -119,10 +124,36 @@ impl Runtime {
                 self.settings.indicator_size,
                 down,
             )?;
-            unsafe {
-                SetTimer(self.hwnd, ANIMATION_TIMER, 16, None);
+            if self.frame_deadline.is_none() {
+                self.schedule_frame()?;
             }
         }
+        Ok(())
+    }
+
+    fn schedule_frame(&mut self) -> Result<(), String> {
+        let previous = self.frame_deadline.take();
+        let Some(interval) = self.overlays.frame_interval() else {
+            return Ok(());
+        };
+        let now = Instant::now();
+        let deadline = next_deadline(previous.unwrap_or(now), now, interval);
+        let delay = deadline - now;
+        if !self
+            .frame_timer
+            .as_ref()
+            .is_some_and(|timer| timer.arm(delay))
+        {
+            // Older Windows versions do not support high-resolution waitable timers.
+            let millis = delay.as_nanos().div_ceil(1_000_000) as u32;
+            if unsafe { SetTimer(self.hwnd, ANIMATION_TIMER, millis, None) } == 0 {
+                return Err(format!(
+                    "无法安排波纹刷新：{}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+        }
+        self.frame_deadline = Some(deadline);
         Ok(())
     }
 
@@ -149,16 +180,21 @@ unsafe extern "system" fn window_proc(hwnd: HWND, message: u32, wp: WPARAM, lp: 
                 }
             });
         }
-        WM_TIMER if wp == ANIMATION_TIMER => RUNTIME.with_borrow_mut(|runtime| {
-            if let Some(runtime) = runtime {
-                if let Err(error) = runtime.overlays.tick() {
-                    eprintln!("{error}");
-                }
-                if !runtime.overlays.has_animation() {
-                    KillTimer(hwnd, ANIMATION_TIMER);
-                }
+        FRAME_MESSAGE | WM_TIMER if message == FRAME_MESSAGE || wp == ANIMATION_TIMER => {
+            if message == WM_TIMER {
+                KillTimer(hwnd, ANIMATION_TIMER);
             }
-        }),
+            RUNTIME.with_borrow_mut(|runtime| {
+                if let Some(runtime) = runtime {
+                    if let Err(error) = runtime.overlays.tick() {
+                        eprintln!("{error}");
+                    }
+                    if let Err(error) = runtime.schedule_frame() {
+                        eprintln!("{error}");
+                    }
+                }
+            });
+        }
         _ => return DefWindowProcW(hwnd, message, wp, lp),
     }
     0
@@ -201,6 +237,8 @@ pub fn start(settings: &AppSettings) -> Result<(), String> {
         let mut runtime = Runtime {
             hwnd,
             hook,
+            frame_timer: FrameTimer::new(hwnd),
+            frame_deadline: None,
             overlays,
             tracker: ButtonTracker::default(),
             settings: settings.clone(),
@@ -225,6 +263,7 @@ pub fn apply(settings: &AppSettings) -> Result<(), String> {
 impl Drop for Runtime {
     fn drop(&mut self) {
         unsafe {
+            drop(self.frame_timer.take());
             if !self.hook.is_null() {
                 UnhookWindowsHookEx(self.hook);
             }
