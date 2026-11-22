@@ -1,6 +1,6 @@
 [package]
 name = "click-show"
-version = "1.4.1"
+version = "1.0.0"
 description = "ClickShow 鼠标点击与位置提示器"
 license = "MIT"
 edition = "2024"
