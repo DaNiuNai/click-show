@@ -1,0 +1,55 @@
+[package]
+name = "click-show"
+version = "1.4.1"
+description = "ClickShow 鼠标点击与位置提示器"
+license = "MIT"
+edition = "2024"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "click_show_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+ui-access = []
+
+[dependencies.reqwest]
+version = "0.13"
+default-features = false
+features = ["blocking", "native-tls"]
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader",
+    "Win32_System_Registry", "Win32_Security", "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tauri-plugin-autostart = "2"
+block2 = "0.6"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-graphics", "objc2-quartz-core", "NSColor", "NSEvent", "NSGraphics", "NSPanel", "NSResponder", "NSScreen", "NSView", "NSWindow"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSGeometry", "NSRunLoop", "NSString", "NSTimer"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["CGEvent", "CGEventTypes"] }
+objc2-quartz-core = { version = "0.3", default-features = false, features = ["std", "CALayer", "CATransaction", "objc2-core-graphics"] }
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

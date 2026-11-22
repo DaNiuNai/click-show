@@ -127,13 +127,15 @@ impl MouseButton {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ButtonSetting {
     pub is_enabled: bool,
     pub color: String,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub enable_click_circle: bool,
     pub enable_hover_dot: bool,
@@ -141,6 +143,7 @@ pub struct AppSettings {
     pub hover_dot_size: f64,
     pub hover_dot_fill: String,
     pub mouse_button_settings: [ButtonSetting; 5],
+    #[serde(skip)]
     pub last_notified_version: Option<String>,
 }
 
